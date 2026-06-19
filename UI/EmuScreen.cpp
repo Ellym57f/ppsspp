@@ -1507,9 +1507,6 @@ void EmuScreen::update() {
 	}
 	bool newOverlayMessage = currentChatCount > chatOverlayLastCount_;
 
-	// Detectar si la pantalla de chat completo está abierta
-	bool chatMenuVisible = chatMenu_ && chatMenu_->GetVisibility() != V_GONE;
-
 	// Creación diferida del contenedor si el overlay está activado (¡RESTAURADO!)
 	if (!chatOverlay_ && root_ && g_Config.bChatOverlayEnabled) {
 		using namespace UI;

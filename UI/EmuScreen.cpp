@@ -1510,6 +1510,28 @@ void EmuScreen::update() {
 	// Detectar si la pantalla de chat completo está abierta
 	bool chatMenuVisible = chatMenu_ && chatMenu_->GetVisibility() != V_GONE;
 
+	// Creación diferida del contenedor si el overlay está activado (¡RESTAURADO!)
+	if (!chatOverlay_ && root_ && g_Config.bChatOverlayEnabled) {
+		using namespace UI;
+		float margin = 12.0f;
+		float bottom_margin = (g_Config.iChatOverlayCorner == 2 || g_Config.iChatOverlayCorner == 3) ? 85.0f : margin;
+		
+		chatOverlay_ = new LinearLayout(ORIENT_VERTICAL, new AnchorLayoutParams(
+			WRAP_CONTENT, WRAP_CONTENT,
+			(g_Config.iChatOverlayCorner == 0 || g_Config.iChatOverlayCorner == 2) ? margin : NONE,
+			(g_Config.iChatOverlayCorner == 0 || g_Config.iChatOverlayCorner == 1) ? margin : NONE,
+			(g_Config.iChatOverlayCorner == 1 || g_Config.iChatOverlayCorner == 3) ? margin : NONE,
+			(g_Config.iChatOverlayCorner == 2 || g_Config.iChatOverlayCorner == 3) ? bottom_margin : NONE
+		));
+		chatOverlay_->SetBG(Drawable(0)); // Fondo transparente para quitar el recuadro negro invasivo
+		chatOverlay_->SetHasDropShadow(false);
+		chatOverlay_->SetVisibility(V_GONE);
+		root_->Add(chatOverlay_);
+	}
+
+	// Detectar si la pantalla de chat completo está abierta
+	bool chatMenuVisible = chatMenu_ && chatMenu_->GetVisibility() != V_GONE;
+
 	// Si el chat completo está abierto, consumimos los mensajes nuevos silenciosamente sin activar el overlay
 	if (chatMenuVisible) {
 		chatOverlayLastCount_ = currentChatCount;

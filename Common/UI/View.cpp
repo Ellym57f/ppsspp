@@ -1279,6 +1279,19 @@ void TextEdit::Draw(UIContext &dc) {
 	float textX = textBounds.x;
 	float w, h;
 
+	// Función lambda auxiliar para medir el texto corrigiendo el recorte de espacios finales
+	auto MeasureTextSafe = [&](const std::string &str, float *outW, float *outH) {
+		if (!str.empty() && str.back() == ' ') {
+			float wDot, hDot;
+			std::string dummy = str + ".";
+			dc.MeasureText(dc.GetTheme().uiFont, 1.0f, 1.0f, dummy, &wDot, &hDot, ALIGN_VCENTER | ALIGN_LEFT | align_);
+			dc.MeasureText(dc.GetTheme().uiFont, 1.0f, 1.0f, ".", outW, outH, ALIGN_VCENTER | ALIGN_LEFT | align_);
+			*outW = wDot - *outW; // Restamos el punto para obtener el ancho neto con espacios incluidos
+		} else {
+			dc.MeasureText(dc.GetTheme().uiFont, 1.0f, 1.0f, str, outW, outH, ALIGN_VCENTER | ALIGN_LEFT | align_);
+		}
+	};
+
 	textBounds.x = textX - scrollPos_;
 
 	std::string textToDisplay = text_;
@@ -1297,8 +1310,8 @@ void TextEdit::Draw(UIContext &dc) {
 		dc.DrawTextRect(textToDisplay, textBounds, textColor, ALIGN_VCENTER | ALIGN_LEFT | align_);
 	}
 
-	// Hack to find the caret position. Might want to find a better way...
-	dc.MeasureText(dc.GetTheme().uiFont, 1.0f, 1.0f, textToDisplay.substr(0, caret_), &w, &h, ALIGN_VCENTER | ALIGN_LEFT | align_);
+	// Hack to find the caret position. (Usa ahora nuestra medida segura con espacios)
+	MeasureTextSafe(textToDisplay.substr(0, caret_), &w, &h);
 	float caretX = w - scrollPos_;
 	if (caretX > origTextBounds.w) {
 		scrollPos_ += caretX - origTextBounds.w;
@@ -1312,7 +1325,8 @@ void TextEdit::Draw(UIContext &dc) {
 	if (selectAtX_ >= 0) {
 		caret_ = -1;
 		for (int i = 0; i <= text_.size(); ) {
-			dc.MeasureText(dc.GetTheme().uiFont, 1.0f, 1.0f, textToDisplay.substr(0, i), &w, &h, ALIGN_VCENTER | ALIGN_LEFT | align_);
+			// Usa también la medida segura al hacer clics para que posicione bien el cursor sobre los espacios
+			MeasureTextSafe(textToDisplay.substr(0, i), &w, &h);
 			float charX = w - scrollPos_;
 			if (charX >= selectAtX_ - 3) {
 				caret_ = i;

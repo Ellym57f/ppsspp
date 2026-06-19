@@ -200,7 +200,7 @@ public:
 
 	// Adhoc/Networking
     bool bChatOverlayEnabled = true;
-    float fChatOverlayFadeSeconds = 2.5f;
+    int iChatOverlayFadeSeconds = 3;
     int iChatOverlayMaxLines = 4;
     int iChatLogMaxEntries = 50;
 	int iChatOverlayCorner = 2;

@@ -1559,7 +1559,7 @@ void EmuScreen::update() {
 		));
 
 		chatOverlay_->SetVisibility(V_VISIBLE);
-		chatOverlayExpireTime_ = time_now_d() + g_Config.fChatOverlayFadeSeconds;
+		chatOverlayExpireTime_ = time_now_d() + (double)g_Config.iChatOverlayFadeSeconds;
 	}
 
 #ifndef _WIN32
@@ -1637,7 +1637,7 @@ void EmuScreen::update() {
 
 	// We handle the Fadeout per Frame behaviour here
 	if (chatOverlay_ && chatOverlay_->GetVisibility() == V_VISIBLE) {
-		if (g_Config.fChatOverlayFadeSeconds >= 999.0f) {
+		if (g_Config.iChatOverlayFadeSeconds >= 999) {
 			// 'Persistence' behaviour: messages always visible
 			for (auto tv : chatOverlayTextViews_) {
 				tv->SetTextColor(0xFFFFFFFF);
@@ -1648,7 +1648,7 @@ void EmuScreen::update() {
 				chatOverlay_->SetVisibility(V_GONE);
 			} else {
 				// Adjust text views alpha safely using our tracked list
-				double fade = remain / std::max(0.001, (double)g_Config.fChatOverlayFadeSeconds);
+				double fade = remain / std::max(0.001, (double)g_Config.iChatOverlayFadeSeconds);
 				uint8_t a = static_cast<uint8_t>(255 * fade);
 				uint32_t txtColor = (uint32_t(a) << 24) | 0xFFFFFF;
 				for (auto tv : chatOverlayTextViews_) {

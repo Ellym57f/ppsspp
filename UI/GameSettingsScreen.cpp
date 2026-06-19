@@ -1076,7 +1076,7 @@ void GameSettingsScreen::CreateNetworkingSettings(UI::ViewGroup *networkingSetti
 	networkingSettings->Add(new CheckBox(&g_Config.bChatOverlayEnabled, n->T("Show chat overlay")));
 
 	// Tiempo de desvanecimiento (de 1.0 a 15.0 segundos, con incrementos de 0.5s. Si se establece en 999.0 o más, no desaparecerá)
-	networkingSettings->Add(new PopupSliderChoice(&g_Config.fChatOverlayFadeSeconds, 1.0f, 15.0f, 2.5f, n->T("Chat overlay fade seconds"), 0.5f, screenManager(), n->T("s")));
+	networkingSettings->Add(new PopupSliderChoice(&g_Config.iChatOverlayFadeSeconds, 1, 15, 3, n->T("Chat overlay fade seconds"), 1, screenManager(), n->T("s")));
 
 	// Cantidad máxima de líneas visibles en pantalla (de 1 a 10, con incrementos de 1)
 	networkingSettings->Add(new PopupSliderChoice(&g_Config.iChatOverlayMaxLines, 1, 10, 4, n->T("Chat overlay max lines"), 1, screenManager()));
@@ -1086,7 +1086,7 @@ void GameSettingsScreen::CreateNetworkingSettings(UI::ViewGroup *networkingSetti
 
 	// Selección de esquina (0: Superior Izquierda, 1: Superior Derecha, 2: Inferior Izquierda, 3: Inferior Derecha, con incrementos de 1)
 	networkingSettings->Add(new PopupSliderChoice(&g_Config.iChatOverlayCorner, 0, 3, 1, n->T("Chat overlay corner (0:TL, 1:TR, 2:BL, 3:BR)"), 1, screenManager()));
-		
+
 	networkingSettings->Add(new ItemHeader(n->T("Quick chat")));
 	CheckBox *qc = networkingSettings->Add(new CheckBox(&g_Config.bEnableQuickChat, n->T("Enable quick chat")));
 	qc->SetEnabledPtr(&g_Config.bEnableNetworkChat);

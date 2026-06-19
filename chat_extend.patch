@@ -1,0 +1,381 @@
+diff --git a/Core/Config.h b/Core/Config.h
+--- a/Core/Config.h
++++ b/Core/Config.h
+@@ -20,5 +20,10 @@ struct Config : public ConfigBlock {
+     void Init();
+ 
+     // Adhoc/Networking
++    bool bChatOverlayEnabled = true;
++    float fChatOverlayFadeSeconds = 2.5f;
++    int iChatOverlayMaxLines = 4;
++    int iChatLogMaxEntries = 50;
++
+     // These are Win UI only
+     bool bTopMost;
+diff --git a/Core/HLE/proAdhoc.cpp b/Core/HLE/proAdhoc.cpp
+--- a/Core/HLE/proAdhoc.cpp
++++ b/Core/HLE/proAdhoc.cpp
+@@ -1,4 +1,8 @@
+ #include "proAdhoc.h"
+ #include "Common/Log.h"
+ #include "Core/Config.h"
++#include <map>
++#include <chrono>
++#include <sstream>
++#include <iomanip>
+ 
+@@ -350,28 +350,64 @@
+ void sendChat(std::string_view chatString) {
+     SceNetAdhocctlChatPacketC2S chat{};
+     chat.base.opcode = OPCODE_CHAT;
+-        if (!chatString.empty()) {
+-            //maximum char allowed is 64 character for compability with original server (pro.coldbird.net)
+-            std::string message(chatString.substr(0, 60)); // 64 return chat variable corrupted is it out of memory?
+-            strcpy(chat.message, message.c_str());
+-            //Send Chat Messages
+-            if (IsSocketReady((int)metasocket, false, true) > 0) {
+-                int chatResult = (int)send((int)metasocket, (const char*)&chat, sizeof(chat), MSG_NOSIGNAL);
+-                NOTICE_LOG(Log::sceNet, "Send Chat %s to Adhoc Server", chat.message);
+-                std::string name = g_Config.sNickName;
+-
+-                std::lock_guard<std::mutex> guard(chatLogLock);
+-                chatLog.emplace_back(name.substr(0, 8) + ": " + chat.message);
+-                chatMessageGeneration++;
+-            }
+-        }
++        if (!chatString.empty()) {
++            // Keep wire-compatible packet size (ADHOCCTL_MESSAGE_LEN).
++            // If the message is longer than the packet allows, fragment it into multiple chat packets.
++            const size_t packSize = ADHOCCTL_MESSAGE_LEN - 1; // leave room for safety/null
++            std::string full(chatString);
++
++            // Unique fragment id so receivers can reassemble. Use time + low-rand.
++            uint32_t fragId = static_cast<uint32_t>(time(nullptr)) ^ (static_cast<uint32_t>(rand()) << 16);
++            std::ostringstream tmp;
++            tmp << std::hex << std::uppercase << fragId;
++            std::string fragIdHex = tmp.str();
++
++            // Prepare fragments. We'll add a short ASCII header to each fragment of the form:
++            // PPF:<FRAGIDHEX>:<IDX>/<TOTAL>|<payload>
++            // This keeps on-wire size <= ADHOCCTL_MESSAGE_LEN and allows updated clients to reassemble.
++            // Note: older clients/servers will still accept and display fragments individually.
++            size_t pos = 0;
++            size_t maxPayloadPerPacket = packSize; // we'll subtract header per-fragment below
++            // Pre-calc worst-case header length to compute total parts.
++            std::string sampleHeader = "PPF:" + fragIdHex + ":" + std::to_string(1) + "/" + std::to_string(1) + "|";
++            size_t headerOverhead = sampleHeader.size();
++            if (headerOverhead >= packSize) headerOverhead = 0; // paranoid
++            size_t usable = packSize - headerOverhead;
++            size_t totalParts = (full.size() + usable - 1) / usable;
++
++            for (size_t i = 0; i < totalParts; ++i) {
++                size_t idx = i + 1;
++                std::string header = "PPF:" + fragIdHex + ":" + std::to_string(idx) + "/" + std::to_string(totalParts) + "|";
++                size_t avail = packSize - header.size();
++                std::string chunk = full.substr(pos, avail);
++                std::string out = header + chunk;
++                // Safe copy into packet buffer
++                memset(chat.message, 0, sizeof(chat.message));
++                strncpy(chat.message, out.c_str(), sizeof(chat.message) - 1);
++
++                // Send
++                if (IsSocketReady((int)metasocket, false, true) > 0) {
++                    int chatResult = (int)send((int)metasocket, (const char*)&chat, sizeof(chat), MSG_NOSIGNAL);
++                    NOTICE_LOG(Log::sceNet, "Send Chat fragment %zu/%zu to Adhoc Server: %s", idx, totalParts, chat.message);
++                }
++
++                pos += avail;
++            }
++
++            // Add full message locally to chat log immediately (so sender sees it as one message)
++            std::string name = g_Config.sNickName;
++            std::lock_guard<std::mutex> guard(chatLogLock);
++            chatLog.emplace_back(name.substr(0, 8) + ": " + full);
++            chatMessageGeneration++;
++        }
+ }
+ 
+ std::vector<std::string> getChatLog() {
+     std::lock_guard<std::mutex> guard(chatLogLock);
+-    // If the log gets large, trim it down.
+-    if (chatLog.size() > 50) {
+-        chatLog.erase(chatLog.begin(), chatLog.begin() + (chatLog.size() - 50));
+-    }
++    // If the log gets large, trim it down. Honor configurable max entries.
++    int maxEntries = g_Config.iChatLogMaxEntries > 0 ? g_Config.iChatLogMaxEntries : 50;
++    if (chatLog.size() > static_cast<size_t>(maxEntries)) {
++        chatLog.erase(chatLog.begin(), chatLog.begin() + (chatLog.size() - maxEntries));
++    }
+     return chatLog;
+ }
+@@ -100,25 +100,95 @@
+     // Chat Packet
+     else if (rx[0] == OPCODE_CHAT) {
+         // Enough Data available
+         if (rxpos >= (int)sizeof(SceNetAdhocctlChatPacketS2C)) {
+             // Cast Packet
+             SceNetAdhocctlChatPacketS2C* packet = (SceNetAdhocctlChatPacketS2C*)rx;
+             INFO_LOG(Log::sceNet, "FriendFinder: Incoming OPCODE_CHAT");
+ 
+             // Fix strings with null-terminated
+             packet->name.data[ADHOCCTL_NICKNAME_LEN - 1] = 0;
+             packet->base.message[ADHOCCTL_MESSAGE_LEN - 1] = 0;
+ 
+-            // Add Incoming Chat to HUD
+-            NOTICE_LOG(Log::sceNet, "Received chat message %s", packet->base.message);
+-            std::string incoming = "";
+-            std::string name = (char*)packet->name.data;
+-            incoming.append(name.substr(0, 8));
+-            incoming.append(": ");
+-            incoming.append((char*)packet->base.message);
+-
+-            std::lock_guard<std::mutex> guard(chatLogLock);
+-            chatLog.push_back(incoming);
+-            chatMessageGeneration++;
++            // Add Incoming Chat to HUD. Support reassembly of fragments sent by updated clients.
++            const char *raw = (const char*)packet->base.message;
++            std::string msg(raw);
++            std::string name = (char*)packet->name.data;
++
++            // Fragment reassembly storage (static, keyed by name+fragid)
++            struct FragEntry { int total = 0; std::map<int, std::string> parts; uint64_t lastSeen = 0; };
++            static std::map<std::string, FragEntry> fragMap;
++
++            auto now_ms = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
++                std::chrono::system_clock::now().time_since_epoch()).count());
++
++            bool handled = false;
++            if (msg.rfind("PPF:", 0) == 0) {
++                // Format: PPF:<FRAGIDHEX>:<IDX>/<TOTAL>|<payload>
++                size_t firstColon = msg.find(':', 4);
++                size_t slash = std::string::npos;
++                size_t pipe = msg.find('|');
++                if (firstColon != std::string::npos && pipe != std::string::npos) {
++                    std::string fragIdHex = msg.substr(4, firstColon - 4);
++                    std::string idxTotal = msg.substr(firstColon + 1, pipe - (firstColon + 1));
++                    slash = idxTotal.find('/');
++                    if (slash != std::string::npos) {
++                        int idx = atoi(idxTotal.substr(0, slash).c_str());
++                        int total = atoi(idxTotal.substr(slash + 1).c_str());
++                        std::string payload = msg.substr(pipe + 1);
++
++                        std::string key = name + "|" + fragIdHex;
++                        auto &entry = fragMap[key];
++                        entry.total = total;
++                        entry.parts[idx] = payload;
++                        entry.lastSeen = now_ms;
++
++                        // If all parts received, assemble and push single message.
++                        if ((int)entry.parts.size() == entry.total) {
++                            std::string full;
++                            for (int i = 1; i <= entry.total; ++i) {
++                                full += entry.parts[i];
++                            }
++                            std::string incoming = name.substr(0, 8) + ": " + full;
++                            std::lock_guard<std::mutex> guard(chatLogLock);
++                            chatLog.push_back(incoming);
++                            chatMessageGeneration++;
++                            handled = true;
++                            fragMap.erase(key);
++                        }
++                    }
++                }
++            }
++
++            // Periodically flush stale fragment assemblies (older than 10s)
++            for (auto it = fragMap.begin(); it != fragMap.end();) {
++                if (now_ms > it->second.lastSeen + 10000) {
++                    // assemble whatever we have in order
++                    std::string assembled;
++                    for (auto &p : it->second.parts) assembled += p.second;
++                    if (!assembled.empty()) {
++                        // key format: name|fragid
++                        std::string senderName = it->first.substr(0, it->first.find('|'));
++                        std::string incoming = senderName.substr(0, 8) + ": " + assembled;
++                        std::lock_guard<std::mutex> guard(chatLogLock);
++                        chatLog.push_back(incoming);
++                        chatMessageGeneration++;
++                    }
++                    it = fragMap.erase(it);
++                } else {
++                    ++it;
++                }
++            }
++
++            if (!handled) {
++                // Not a fragment or not yet complete: treat as a normal chat message
++                std::string incoming = "";
++                incoming.append(name.substr(0, 8));
++                incoming.append(": ");
++                incoming.append(msg);
++
++                std::lock_guard<std::mutex> guard(chatLogLock);
++                chatLog.push_back(incoming);
++                chatMessageGeneration++;
++            }
+             // Move RX Buffer
+             memmove(rx, rx + sizeof(SceNetAdhocctlChatPacketS2C), sizeof(rx) - sizeof(SceNetAdhocctlChatPacketS2C));
+diff --git a/UI/ChatScreen.cpp b/UI/ChatScreen.cpp
+--- a/UI/ChatScreen.cpp
++++ b/UI/ChatScreen.cpp
+@@ -10,2 +10,2 @@
+-        TextEditPopupScreen *popupScreen = new TextEditPopupScreen(&messageTemp_, "", n->T("Chat message"), 256);
++        TextEditPopupScreen *popupScreen = new TextEditPopupScreen(&messageTemp_, "", n->T("Chat message"), 1000);
+         if (System_GetPropertyBool(SYSPROP_KEYBOARD_IS_SOFT)) {
+diff --git a/UI/EmuScreen.h b/UI/EmuScreen.h
+--- a/UI/EmuScreen.h
++++ b/UI/EmuScreen.h
+@@ -20,5 +20,12 @@
+ 	UI::Button *cardboardDisableButton_ = nullptr;
+ 
+ 	std::string extraAssertInfoStr_;
++
++	// Chat overlay HUD (transient messages shown on-screen)
++	UI::LinearLayout *chatOverlay_ = nullptr;
++	double chatOverlayExpireTime_ = 0.0;
++	int chatOverlayCorner_ = 1; // 0=top-left,1=top-right,2=bottom-left,3=bottom-right
++	std::vector<std::string> chatOverlayMessages_;
++
+ 	std::unique_ptr<ImDebugger> imDebugger_;
+ 	ImCommand imCmd_{};  // needed to buffer commands in case imgui wasn't created yet.
+diff --git a/UI/GameSettingsScreen.cpp b/UI/GameSettingsScreen.cpp
+--- a/UI/GameSettingsScreen.cpp
++++ b/UI/GameSettingsScreen.cpp
+@@ -50,2 +50,31 @@
+ 		}
+ 	}
++
++	// Chat UI options
++	auto chatHeader = networkingSettings->Add(new ItemHeader(n->T("Chat")));
++	networkingSettings->Add(new CheckBox(&g_Config.bChatOverlayEnabled, n->T("Show chat overlay")));
++
++	// Fade seconds
++	static std::string chatFadeStr = std::to_string(g_Config.fChatOverlayFadeSeconds);
++	PopupTextInputChoice *fadeChoice = networkingSettings->Add(new PopupTextInputChoice(NON_EPHEMERAL_TOKEN, &chatFadeStr, n->T("Chat overlay fade seconds"), "", 8, screenManager(), new LinearLayoutParams(1.0)));
++	fadeChoice->OnChange.Add([](UI::EventParams &e) {
++		try {
++			float v = std::stof(e.s);
++			if (v < 0.1f) v = 0.1f;
++			g_Config.fChatOverlayFadeSeconds = v;
++		} catch(...) {}
++	});
++
++	// Max overlay lines
++	static std::string chatLinesStr = std::to_string(g_Config.iChatOverlayMaxLines);
++	PopupTextInputChoice *linesChoice = networkingSettings->Add(new PopupTextInputChoice(NON_EPHEMERAL_TOKEN, &chatLinesStr, n->T("Chat overlay max lines"), "", 4, screenManager(), new LinearLayoutParams(1.0)));
++	linesChoice->OnChange.Add([](UI::EventParams &e) {
++		try { g_Config.iChatOverlayMaxLines = std::stoi(e.s); } catch(...) {}
++	});
++
++	// Max chat log entries
++	static std::string chatLogMaxStr = std::to_string(g_Config.iChatLogMaxEntries);
++	PopupTextInputChoice *logChoice = networkingSettings->Add(new PopupTextInputChoice(NON_EPHEMERAL_TOKEN, &chatLogMaxStr, n->T("Max chat log entries"), "", 5, screenManager(), new LinearLayoutParams(1.0)));
++	logChoice->OnChange.Add([](UI::EventParams &e) {
++		try { g_Config.iChatLogMaxEntries = std::stoi(e.s); } catch(...) {}
++	});
+diff --git a/UI/EmuScreen.cpp b/UI/EmuScreen.cpp
+--- a/UI/EmuScreen.cpp
++++ b/UI/EmuScreen.cpp
+@@ -30,5 +30,10 @@ void EmuScreen::OpenChat(bool focus) {
+         if (chatMenu_ != nullptr) {
+             chatMenu_->SetVisibility(UI::V_VISIBLE);
+         }
+     }
++
++    // Hide transient overlay when opening full chat
++    if (chatOverlay_) {
++        chatOverlay_->SetVisibility(UI::V_GONE);
++    }
+ }
+@@ -80,10 +85,90 @@ void EmuScreen::update() {
+         if (chatButton_ && chatMenu_) {
+             if (chatMenu_->GetVisibility() != V_GONE) {
+                 chatMessages_ = GetChatMessageCount();
+                 newChatMessages_ = 0;
+             } else {
+                 int diff = GetChatMessageCount() - chatMessages_;
+                 // Cap the count at 50.
+                 newChatMessages_ = diff > 50 ? 50 : diff;
+             }
+         }
++
++    // Lazily create the chat overlay UI group if needed.
++    if (!chatOverlay_ && root_ && g_Config.bChatOverlayEnabled) {
++        using namespace UI;
++        // Create a small vertical layout to show lines of text.
++        chatOverlay_ = new LinearLayout(ORIENT_VERTICAL, new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, NONE, NONE, NONE, NONE));
++        chatOverlay_->SetBG(Drawable(0x99303030));
++        chatOverlay_->SetHasDropShadow(true);
++        chatOverlay_->SetVisibility(V_GONE);
++        // Add to root so it's rendered on top of game.
++        root_->Add(chatOverlay_);
++    }
++
++    // If there are new chat messages and overlay is enabled, populate and show overlay.
++    if (g_Config.bChatOverlayEnabled && chatOverlay_ && newChatMessages_ > 0) {
++        // Pull the latest messages from getChatLog().
++        std::vector<std::string> all = getChatLog();
++        int maxLines = g_Config.iChatOverlayMaxLines > 0 ? g_Config.iChatOverlayMaxLines : 4;
++        chatOverlayMessages_.clear();
++        for (int i = (int)all.size() - maxLines; i < (int)all.size(); ++i) {
++            if (i >= 0) chatOverlayMessages_.push_back(all[i]);
++        }
++
++        // Recreate overlay children
++        chatOverlay_->Clear();
++        for (auto &line : chatOverlayMessages_) {
++            TextView *tv = chatOverlay_->Add(new TextView(line, ALIGN_LEFT | FLAG_WRAP_TEXT, true, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
++            tv->SetTextColor(0xFFFFFFFF);
++        }
++
++        // Position overlay based on user preference. Use simple anchor offsets.
++        float margin = 12.0f;
++        Bounds b = root_->GetBounds();
++        float ox = 0.0f, oy = 0.0f;
++        switch (g_Config.iChatOverlayCorner) {
++        case 0: // top-left
++            ox = margin; oy = margin;
++            break;
++        case 1: // top-right
++            ox = b.w - chatOverlay_->GetBounds().w - margin; oy = margin;
++            break;
++        case 2: // bottom-left
++            ox = margin; oy = b.h - chatOverlay_->GetBounds().h - margin;
++            break;
++        case 3: // bottom-right
++            ox = b.w - chatOverlay_->GetBounds().w - margin; oy = b.h - chatOverlay_->GetBounds().h - margin;
++            break;
++        default:
++            ox = b.w - chatOverlay_->GetBounds().w - margin; oy = margin;
++            break;
++        }
++        chatOverlay_->SetTranslation(ox, oy);
++
++        chatOverlay_->SetVisibility(V_VISIBLE);
++        chatOverlayExpireTime_ = OS::GetTimeMillisDouble() / 1000.0 + g_Config.fChatOverlayFadeSeconds;
++    }
++
++    // Manage overlay fade/hide per-frame
++    if (chatOverlay_ && chatOverlay_->GetVisibility() == V_VISIBLE) {
++        double now = OS::GetTimeMillisDouble() / 1000.0;
++        double remain = chatOverlayExpireTime_ - now;
++        if (remain <= 0.0) {
++            chatOverlay_->SetVisibility(V_GONE);
++        } else {
++            // Apply alpha proportional to remaining time (fade out near end)
++            double fade = remain / std::max(0.001, (double)g_Config.fChatOverlayFadeSeconds);
++            uint8_t baseAlpha = 0x99; // same as earlier
++            uint8_t a = static_cast<uint8_t>(baseAlpha * fade);
++            uint32_t bg = (uint32_t(a) << 24) | (0x00303030);
++            chatOverlay_->SetBG(Drawable(bg));
++            // adjust text alpha
++            uint32_t txtBase = 0xFFFFFF;
++            uint32_t txtColor = (uint32_t(0xFF & (a)) << 24) | txtBase;
++            for (auto child : chatOverlay_->Children()) {
++                if (auto tv = dynamic_cast<TextView*>(child)) {
++                    tv->SetTextColor(txtColor);
++                }
++            }
++        }
++    }
+}

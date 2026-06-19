@@ -198,6 +198,13 @@ public:
 	bool bFullscreenOnDoubleclick;
 	bool bPauseOnLostFocus;
 
+	// Adhoc/Networking
+    bool bChatOverlayEnabled = true;
+    float fChatOverlayFadeSeconds = 2.5f;
+    int iChatOverlayMaxLines = 4;
+    int iChatLogMaxEntries = 50;
+	int iChatOverlayCorner = 2;
+
 	// These are Win UI only
 	bool bTopMost;
 	bool bIgnoreWindowsKey;

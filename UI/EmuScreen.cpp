@@ -1411,6 +1411,10 @@ void EmuScreen::CreateViews() {
 	});
 	// Will become visible along with the loadingView.
 	loadingBG->SetVisibility(V_INVISIBLE);
+
+	// Limpiar punteros de overlay para que se recreen de forma segura en la nueva raíz
+    chatOverlay_ = nullptr;
+    chatOverlayTextViews_.clear();
 }
 
 void EmuScreen::deviceLost() {
@@ -1463,6 +1467,9 @@ void EmuScreen::OpenChat(bool focus) {
 			}
 		}
 	}
+    if (chatOverlay_) {
+        chatOverlay_->SetVisibility(UI::V_GONE);
+    }
 }
 
 // To avoid including proAdhoc.h, which includes a lot of stuff.
@@ -1491,6 +1498,59 @@ void EmuScreen::update() {
 			// Cap the count at 50.
 			newChatMessages_ = diff > 50 ? 50 : diff;
 		}
+	}
+
+	// Lazily create the chat overlay UI group if needed.
+	if (!chatOverlay_ && root_ && g_Config.bChatOverlayEnabled) {
+		using namespace UI;
+		float margin = 12.0f;
+		
+		// Create layout with anchor parameters corresponding to the selected corner
+		chatOverlay_ = new LinearLayout(ORIENT_VERTICAL, new AnchorLayoutParams(
+			WRAP_CONTENT, WRAP_CONTENT,
+			(g_Config.iChatOverlayCorner == 0 || g_Config.iChatOverlayCorner == 2) ? margin : NONE, // Izquierda
+			(g_Config.iChatOverlayCorner == 0 || g_Config.iChatOverlayCorner == 1) ? margin : NONE, // Arriba
+			(g_Config.iChatOverlayCorner == 1 || g_Config.iChatOverlayCorner == 3) ? margin : NONE, // Derecha
+			(g_Config.iChatOverlayCorner == 2 || g_Config.iChatOverlayCorner == 3) ? margin : NONE  // Abajo
+		));
+		chatOverlay_->SetBG(Drawable(0x99303030));
+		chatOverlay_->SetHasDropShadow(true);
+		chatOverlay_->SetVisibility(V_GONE);
+		// Add to root so it's rendered on top of game.
+		root_->Add(chatOverlay_);
+	}
+
+	// If there are new chat messages and overlay is enabled, populate and show overlay.
+	if (g_Config.bChatOverlayEnabled && chatOverlay_ && newChatMessages_ > 0) {
+		// Pull the latest messages from getChatLog().
+		std::vector<std::string> all = getChatLog();
+		int maxLines = g_Config.iChatOverlayMaxLines > 0 ? g_Config.iChatOverlayMaxLines : 4;
+		chatOverlayMessages_.clear();
+		for (int i = (int)all.size() - maxLines; i < (int)all.size(); ++i) {
+			if (i >= 0) chatOverlayMessages_.push_back(all[i]);
+		}
+
+		// Recreate overlay children
+		chatOverlay_->Clear();
+		chatOverlayTextViews_.clear();
+		for (auto &line : chatOverlayMessages_) {
+			TextView *tv = chatOverlay_->Add(new TextView(line, ALIGN_LEFT | FLAG_WRAP_TEXT, true, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
+			tv->SetTextColor(0xFFFFFFFF);
+			chatOverlayTextViews_.push_back(tv);
+		}
+
+		// Dynamically update position based on user preference using layout parameters
+		float margin = 12.0f;
+		chatOverlay_->ReplaceLayoutParams(new AnchorLayoutParams(
+			WRAP_CONTENT, WRAP_CONTENT,
+			(g_Config.iChatOverlayCorner == 0 || g_Config.iChatOverlayCorner == 2) ? margin : NONE,
+			(g_Config.iChatOverlayCorner == 0 || g_Config.iChatOverlayCorner == 1) ? margin : NONE,
+			(g_Config.iChatOverlayCorner == 1 || g_Config.iChatOverlayCorner == 3) ? margin : NONE,
+			(g_Config.iChatOverlayCorner == 2 || g_Config.iChatOverlayCorner == 3) ? margin : NONE
+		));
+
+		chatOverlay_->SetVisibility(V_VISIBLE);
+		chatOverlayExpireTime_ = time_now_d() + g_Config.fChatOverlayFadeSeconds;
 	}
 
 	// Simply forcibly update to the current screen size every frame. Doesn't cost much.
@@ -1567,6 +1627,28 @@ void EmuScreen::update() {
 
 			if (now - saveStatePreviewShownTime_ > 2) {
 				saveStatePreview_->SetVisibility(UI::V_GONE);
+			}
+		}
+	}
+
+	// Manage overlay fade/hide per-frame
+	if (chatOverlay_ && chatOverlay_->GetVisibility() == V_VISIBLE) {
+		double remain = chatOverlayExpireTime_ - now;
+		if (remain <= 0.0) {
+			chatOverlay_->SetVisibility(V_GONE);
+		} else {
+			// Apply alpha proportional to remaining time (fade out near end)
+			double fade = remain / std::max(0.001, (double)g_Config.fChatOverlayFadeSeconds);
+			uint8_t baseAlpha = 0x99; 
+			uint8_t a = static_cast<uint8_t>(baseAlpha * fade);
+			uint32_t bg = (uint32_t(a) << 24) | (0x00303030);
+			chatOverlay_->SetBG(Drawable(bg));
+			
+			// Adjust text views alpha safely using our tracked list
+			uint32_t txtBase = 0xFFFFFF;
+			uint32_t txtColor = (uint32_t(0xFF & a) << 24) | txtBase;
+			for (auto tv : chatOverlayTextViews_) {
+				tv->SetTextColor(txtColor);
 			}
 		}
 	}

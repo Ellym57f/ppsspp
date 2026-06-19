@@ -6,6 +6,7 @@ on:
     - master
     # For testing.
     - actions
+    - multiplayer-chat-extend
     tags:
       - "v*.*"
     paths-ignore:

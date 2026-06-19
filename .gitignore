@@ -1,6 +1,6 @@
 # For MSVC
 *.lastcodeanalysissucceeded
-*.pdb
+*.pdb 
 *.ilk
 *.obj
 *.pch

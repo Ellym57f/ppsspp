@@ -1323,42 +1323,54 @@ void sendChat(std::string_view chatString) {
 			const size_t packSize = ADHOCCTL_MESSAGE_LEN - 1; // leave room for safety/null
 			std::string full(chatString);
 
-			// Unique fragment id so receivers can reassemble. Use time + low-rand.
-			uint32_t fragId = static_cast<uint32_t>(time(nullptr)) ^ (static_cast<uint32_t>(rand()) << 16);
-			std::ostringstream tmp;
-			tmp << std::hex << std::uppercase << fragId;
-			std::string fragIdHex = tmp.str();
-
-			// Prepare fragments. We'll add a short ASCII header to each fragment of the form:
-			// PPF:<FRAGIDHEX>:<IDX>/<TOTAL>|<payload>
-			// This keeps on-wire size <= ADHOCCTL_MESSAGE_LEN and allows updated clients to reassemble.
-			// Note: older clients/servers will still accept and display fragments individually.
-			size_t pos = 0;
-			size_t maxPayloadPerPacket = packSize; // we'll subtract header per-fragment below
-			// Pre-calc worst-case header length to compute total parts.
-			std::string sampleHeader = "PPF:" + fragIdHex + ":" + std::to_string(1) + "/" + std::to_string(1) + "|";
-			size_t headerOverhead = sampleHeader.size();
-			if (headerOverhead >= packSize) headerOverhead = 0; // paranoid
-			size_t usable = packSize - headerOverhead;
-			size_t totalParts = (full.size() + usable - 1) / usable;
-
-			for (size_t i = 0; i < totalParts; ++i) {
-				size_t idx = i + 1;
-				std::string header = "PPF:" + fragIdHex + ":" + std::to_string(idx) + "/" + std::to_string(totalParts) + "|";
-				size_t avail = packSize - header.size();
-				std::string chunk = full.substr(pos, avail);
-				std::string out = header + chunk;
-				// Safe copy into packet buffer
+			if (full.size() <= 64) {
 				memset(chat.message, 0, sizeof(chat.message));
-				strncpy(chat.message, out.c_str(), sizeof(chat.message) - 1);
+				strncpy(chat.message, full.c_str(), sizeof(chat.message) - 1);
 
-				// Send
 				if (IsSocketReady((int)metasocket, false, true) > 0) {
 					int chatResult = (int)send((int)metasocket, (const char*)&chat, sizeof(chat), MSG_NOSIGNAL);
-					NOTICE_LOG(Log::sceNet, "Send Chat fragment %zu/%zu to Adhoc Server: %s", idx, totalParts, chat.message);
+					NOTICE_LOG(Log::sceNet, "Send Standard Chat to Adhoc Server: %s", chat.message);
 				}
+			} else {
+				const size_t packSize = ADHOCCTL_MESSAGE_LEN - 1; // 63 bytes libres de seguridad
 
-				pos += avail;
+				// Unique fragment id so receivers can reassemble. Use time + low-rand.
+				uint32_t fragId = static_cast<uint32_t>(time(nullptr)) ^ (static_cast<uint32_t>(rand()) << 16);
+				std::ostringstream tmp;
+				tmp << std::hex << std::uppercase << fragId;
+				std::string fragIdHex = tmp.str();
+
+				// Prepare fragments. We'll add a short ASCII header to each fragment of the form:
+				// PPF:<FRAGIDHEX>:<IDX>/<TOTAL>|<payload>
+				// This keeps on-wire size <= ADHOCCTL_MESSAGE_LEN and allows updated clients to reassemble.
+				// Note: older clients/servers will still accept and display fragments individually.
+				size_t pos = 0;
+				size_t maxPayloadPerPacket = packSize; // we'll subtract header per-fragment below
+				// Pre-calc worst-case header length to compute total parts.
+				std::string sampleHeader = "PPF:" + fragIdHex + ":" + std::to_string(1) + "/" + std::to_string(1) + "|";
+				size_t headerOverhead = sampleHeader.size();
+				if (headerOverhead >= packSize) headerOverhead = 0; // paranoid
+				size_t usable = packSize - headerOverhead;
+				size_t totalParts = (full.size() + usable - 1) / usable;
+
+				for (size_t i = 0; i < totalParts; ++i) {
+					size_t idx = i + 1;
+					std::string header = "PPF:" + fragIdHex + ":" + std::to_string(idx) + "/" + std::to_string(totalParts) + "|";
+					size_t avail = packSize - header.size();
+					std::string chunk = full.substr(pos, avail);
+					std::string out = header + chunk;
+					// Safe copy into packet buffer
+					memset(chat.message, 0, sizeof(chat.message));
+					strncpy(chat.message, out.c_str(), sizeof(chat.message) - 1);
+
+					// Send
+					if (IsSocketReady((int)metasocket, false, true) > 0) {
+						int chatResult = (int)send((int)metasocket, (const char*)&chat, sizeof(chat), MSG_NOSIGNAL);
+						NOTICE_LOG(Log::sceNet, "Send Chat fragment %zu/%zu to Adhoc Server: %s", idx, totalParts, chat.message);
+					}
+
+					pos += avail;
+				}
 			}
 
 			// Add full message locally to chat log immediately (so sender sees it as one message)

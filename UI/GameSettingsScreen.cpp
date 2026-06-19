@@ -1075,30 +1075,17 @@ void GameSettingsScreen::CreateNetworkingSettings(UI::ViewGroup *networkingSetti
 
 	networkingSettings->Add(new CheckBox(&g_Config.bChatOverlayEnabled, n->T("Show chat overlay")));
 
-	// Fade seconds
-	static std::string chatFadeStr = std::to_string(g_Config.fChatOverlayFadeSeconds);
-	PopupTextInputChoice *fadeChoice = networkingSettings->Add(new PopupTextInputChoice(NON_EPHEMERAL_TOKEN, &chatFadeStr, n->T("Chat overlay fade seconds"), "", 8, screenManager(), new LinearLayoutParams(1.0)));
-	fadeChoice->OnChange.Add([](UI::EventParams &e) {
-		try {
-			float v = std::stof(e.s);
-			if (v < 0.1f) v = 0.1f;
-			g_Config.fChatOverlayFadeSeconds = v;
-		} catch(...) {}
-	});
+	// Tiempo de desvanecimiento (de 1.0 a 15.0 segundos. Si se establece en 999.0 o más, no desaparecerá)
+	networkingSettings->Add(new PopupSliderChoice(&g_Config.fChatOverlayFadeSeconds, 1.0f, 15.0f, 2.5f, n->T("Chat overlay fade seconds"), screenManager(), n->T("s")));
 
-	// Max overlay lines
-	static std::string chatLinesStr = std::to_string(g_Config.iChatOverlayMaxLines);
-	PopupTextInputChoice *linesChoice = networkingSettings->Add(new PopupTextInputChoice(NON_EPHEMERAL_TOKEN, &chatLinesStr, n->T("Chat overlay max lines"), "", 4, screenManager(), new LinearLayoutParams(1.0)));
-	linesChoice->OnChange.Add([](UI::EventParams &e) {
-		try { g_Config.iChatOverlayMaxLines = std::stoi(e.s); } catch(...) {}
-	});
+	// Cantidad máxima de líneas visibles en pantalla (de 1 a 10)
+	networkingSettings->Add(new PopupSliderChoice(&g_Config.iChatOverlayMaxLines, 1, 10, 4, n->T("Chat overlay max lines"), screenManager()));
 
-	// Max chat log entries
-	static std::string chatLogMaxStr = std::to_string(g_Config.iChatLogMaxEntries);
-	PopupTextInputChoice *logChoice = networkingSettings->Add(new PopupTextInputChoice(NON_EPHEMERAL_TOKEN, &chatLogMaxStr, n->T("Max chat log entries"), "", 5, screenManager(), new LinearLayoutParams(1.0)));
-	logChoice->OnChange.Add([](UI::EventParams &e) {
-		try { g_Config.iChatLogMaxEntries = std::stoi(e.s); } catch(...) {}
-	});
+	// Historial máximo de mensajes almacenados (de 10 a 500)
+	networkingSettings->Add(new PopupSliderChoice(&g_Config.iChatLogMaxEntries, 10, 500, 50, n->T("Max chat log entries"), screenManager()));
+
+	// Selección de esquina (0: Superior Izquierda, 1: Superior Derecha, 2: Inferior Izquierda, 3: Inferior Derecha)
+	networkingSettings->Add(new PopupSliderChoice(&g_Config.iChatOverlayCorner, 0, 3, 1, n->T("Chat overlay corner (0:TL, 1:TR, 2:BL, 3:BR)"), screenManager()));
 	
 	networkingSettings->Add(new ItemHeader(n->T("Quick chat")));
 	CheckBox *qc = networkingSettings->Add(new CheckBox(&g_Config.bEnableQuickChat, n->T("Enable quick chat")));

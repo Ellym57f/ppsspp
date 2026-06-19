@@ -1507,28 +1507,20 @@ void EmuScreen::update() {
 	}
 	bool newOverlayMessage = currentChatCount > chatOverlayLastCount_;
 
-	// Creación diferida del contenedor si el overlay está activado
-	if (!chatOverlay_ && root_ && g_Config.bChatOverlayEnabled) {
-		using namespace UI;
-		float margin = 12.0f;
-		float bottom_margin = (g_Config.iChatOverlayCorner == 2 || g_Config.iChatOverlayCorner == 3) ? 85.0f : margin;
-		
-		chatOverlay_ = new LinearLayout(ORIENT_VERTICAL, new AnchorLayoutParams(
-			WRAP_CONTENT, WRAP_CONTENT,
-			(g_Config.iChatOverlayCorner == 0 || g_Config.iChatOverlayCorner == 2) ? margin : NONE,
-			(g_Config.iChatOverlayCorner == 0 || g_Config.iChatOverlayCorner == 1) ? margin : NONE,
-			(g_Config.iChatOverlayCorner == 1 || g_Config.iChatOverlayCorner == 3) ? margin : NONE,
-			(g_Config.iChatOverlayCorner == 2 || g_Config.iChatOverlayCorner == 3) ? bottom_margin : NONE
-		));
-		chatOverlay_->SetBG(Drawable(0)); // Fondo transparente para quitar el recuadro negro invasivo
-		chatOverlay_->SetHasDropShadow(false);
-		chatOverlay_->SetVisibility(V_GONE);
-		root_->Add(chatOverlay_);
+	// Detectar si la pantalla de chat completo está abierta
+	bool chatMenuVisible = chatMenu_ && chatMenu_->GetVisibility() != V_GONE;
+
+	// Si el chat completo está abierto, consumimos los mensajes nuevos silenciosamente sin activar el overlay
+	if (chatMenuVisible) {
+		chatOverlayLastCount_ = currentChatCount;
+		if (chatOverlay_) {
+			chatOverlay_->SetVisibility(V_GONE);
+		}
 	}
 
-	// Si hay nuevos mensajes en la red, actualizamos el overlay y reiniciamos el temporizador
-	if (g_Config.bChatOverlayEnabled && chatOverlay_ && newOverlayMessage) {
-		chatOverlayLastCount_ = currentChatCount; // Actualizar contador para evitar repeticiones por frame
+	// Si hay nuevos mensajes en la red, el overlay está habilitado y el chat principal está CERRADO:
+	if (g_Config.bChatOverlayEnabled && chatOverlay_ && newOverlayMessage && !chatMenuVisible) {
+		chatOverlayLastCount_ = currentChatCount;
 		
 		std::vector<std::string> all = getChatLog();
 		int maxLines = g_Config.iChatOverlayMaxLines > 0 ? g_Config.iChatOverlayMaxLines : 4;
@@ -1537,16 +1529,33 @@ void EmuScreen::update() {
 			if (i >= 0) chatOverlayMessages_.push_back(all[i]);
 		}
 
-		// Recrear las líneas de texto
+		// Recrear las líneas de texto aplicando formato de color al nombre de usuario
 		chatOverlay_->Clear();
 		chatOverlayTextViews_.clear();
 		for (auto &line : chatOverlayMessages_) {
-			TextView *tv = chatOverlay_->Add(new TextView(line, ALIGN_LEFT | FLAG_WRAP_TEXT, true, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
-			tv->SetTextColor(0xFFFFFFFF);
-			chatOverlayTextViews_.push_back(tv);
+			size_t colon = line.find(": ");
+			if (colon != std::string::npos) {
+				std::string name = line.substr(0, colon + 1); // "Nombre:"
+				std::string msg = line.substr(colon + 1);    // " Mensaje"
+
+				LinearLayout *row = chatOverlay_->Add(new LinearLayout(ORIENT_HORIZONTAL, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
+				row->SetSpacing(0.0f);
+
+				TextView *tvName = row->Add(new TextView(name, ALIGN_LEFT, true, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
+				tvName->SetTextColor(0xFFFFA500); 
+				chatOverlayTextViews_.push_back({tvName, 0xFFFFA500});
+
+				TextView *tvMsg = row->Add(new TextView(msg, ALIGN_LEFT | FLAG_WRAP_TEXT, true, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
+				tvMsg->SetTextColor(0xFFFFFFFF);
+				chatOverlayTextViews_.push_back({tvMsg, 0xFFFFFFFF});
+			} else {
+				TextView *tv = chatOverlay_->Add(new TextView(line, ALIGN_LEFT | FLAG_WRAP_TEXT, true, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
+				tv->SetTextColor(0xFFFFFFFF);
+				chatOverlayTextViews_.push_back({tv, 0xFFFFFFFF});
+			}
 		}
 
-		// Reajustar la posición según la esquina, dejando espacio para el botón de chat si es inferior
+		// Reajustar posición de anclaje
 		float margin = 12.0f;
 		float bottom_margin = (g_Config.iChatOverlayCorner == 2 || g_Config.iChatOverlayCorner == 3) ? 85.0f : margin;
 
@@ -1559,7 +1568,7 @@ void EmuScreen::update() {
 		));
 
 		chatOverlay_->SetVisibility(V_VISIBLE);
-		chatOverlayExpireTime_ = time_now_d() + (double)g_Config.iChatOverlayFadeSeconds;
+		chatOverlayExpireTime_ = time_now_d() + g_Config.iChatOverlayFadeSeconds;
 	}
 
 #ifndef _WIN32
@@ -1638,21 +1647,23 @@ void EmuScreen::update() {
 	// We handle the Fadeout per Frame behaviour here
 	if (chatOverlay_ && chatOverlay_->GetVisibility() == V_VISIBLE) {
 		if (g_Config.iChatOverlayFadeSeconds >= 999) {
-			// 'Persistence' behaviour: messages always visible
-			for (auto tv : chatOverlayTextViews_) {
-				tv->SetTextColor(0xFFFFFFFF);
+			// 'Persistence' behaviour: messages always visible preserving their original colors
+			for (auto &p : chatOverlayTextViews_) {
+				uint32_t baseRGB = p.second & 0x00FFFFFF;
+				p.first->SetTextColor(0xFF000000 | baseRGB); // Opacidad completa (0xFF000000) + su color base
 			}
 		} else {
 			double remain = chatOverlayExpireTime_ - now;
 			if (remain <= 0.0) {
 				chatOverlay_->SetVisibility(V_GONE);
 			} else {
-				// Adjust text views alpha safely using our tracked list
+				// Adjust text views alpha safely using our tracked list and preserving their base colors
 				double fade = remain / std::max(0.001, (double)g_Config.iChatOverlayFadeSeconds);
 				uint8_t a = static_cast<uint8_t>(255 * fade);
-				uint32_t txtColor = (uint32_t(a) << 24) | 0xFFFFFF;
-				for (auto tv : chatOverlayTextViews_) {
-					tv->SetTextColor(txtColor);
+				for (auto &p : chatOverlayTextViews_) {
+					uint32_t baseRGB = p.second & 0x00FFFFFF;
+					uint32_t txtColor = (uint32_t(a) << 24) | baseRGB; // Alfa dinámico (a) + su color base
+					p.first->SetTextColor(txtColor);
 				}
 			}
 		}

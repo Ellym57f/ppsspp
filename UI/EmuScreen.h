@@ -146,7 +146,7 @@ private:
 
 	// Chat overlay HUD (transient messages shown on-screen)
 	UI::LinearLayout *chatOverlay_ = nullptr;
-	std::vector<UI::TextView *> chatOverlayTextViews_;
+	std::vector<std::pair<UI::TextView *, uint32_t>> chatOverlayTextViews_;
 	double chatOverlayExpireTime_ = 0.0;
 	int chatOverlayCorner_ = 1; // 0=top-left,1=top-right,2=bottom-left,3=bottom-right
 	std::vector<std::string> chatOverlayMessages_;

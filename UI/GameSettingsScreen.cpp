@@ -1075,8 +1075,14 @@ void GameSettingsScreen::CreateNetworkingSettings(UI::ViewGroup *networkingSetti
 
 	networkingSettings->Add(new CheckBox(&g_Config.bChatOverlayEnabled, n->T("Show chat overlay")));
 
-	// Tiempo de desvanecimiento (de 1.0 a 999.0 segundos, con incrementos de 0.5s. Si se establece en 999.0 o más, no desaparecerá)
-	networkingSettings->Add(new PopupSliderChoice(&g_Config.iChatOverlayFadeSeconds, 1, 999, 3, n->T("Chat overlay fade seconds"), 1, screenManager(), n->T("s")));
+		// Opción de "Siempre visible"
+	networkingSettings->Add(new CheckBox(&g_Config.bChatOverlayAlwaysVisible, n->T("Overlay always visible (no fade)")));
+
+	// Ancho máximo del overlay (de 20% a 100% de la pantalla, con paso de 5%)
+	networkingSettings->Add(new PopupSliderChoice(&g_Config.iChatOverlayWidthPercent, 20, 100, 40, n->T("Chat overlay width percentage"), 5, screenManager(), "%"));
+
+	// Tiempo de desvanecimiento (Se deshabilita visualmente si "Siempre visible" está marcado)
+	networkingSettings->Add(new PopupSliderChoice(&g_Config.iChatOverlayFadeSeconds, 1, 500, 3, n->T("Chat overlay fade seconds"), 1, screenManager(), n->T("s")))->SetEnabledFunc([] { return !g_Config.bChatOverlayAlwaysVisible; });
 
 	// Cantidad máxima de líneas visibles en pantalla (de 1 a 10, con incrementos de 1)
 	networkingSettings->Add(new PopupSliderChoice(&g_Config.iChatOverlayMaxLines, 1, 10, 4, n->T("Chat overlay max lines"), 1, screenManager()));

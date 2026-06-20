@@ -204,6 +204,9 @@ public:
     int iChatOverlayMaxLines = 4;
     int iChatLogMaxEntries = 50;
 	int iChatOverlayCorner = 2;
+	bool bChatOverlayAlwaysVisible = false; // <-- NUEVA: Opción de "siempre visible"
+    int iChatOverlayWidthPercent = 40;      // <-- NUEVA: Porcentaje de ancho de pantalla (por defecto 40%)
+
 
 	// These are Win UI only
 	bool bTopMost;

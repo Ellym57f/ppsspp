@@ -1526,10 +1526,12 @@ void EmuScreen::update() {
 		root_->Add(chatOverlay_);
 	}
 
+
 	// Detectar si la pantalla de chat completo está abierta
 	bool chatMenuVisible = chatMenu_ && chatMenu_->GetVisibility() != V_GONE;
+	bool isAlwaysVisible = g_Config.bChatOverlayAlwaysVisible || g_Config.iChatOverlayFadeSeconds >= 999;
 
-	// Si el chat completo está abierto, consumimos los mensajes nuevos silenciosamente sin activar el overlay
+	// Si el chat completo está abierto, ocultamos el overlay y marcamos los mensajes como procesados
 	if (chatMenuVisible) {
 		chatOverlayLastCount_ = currentChatCount;
 		if (chatOverlay_) {
@@ -1537,10 +1539,18 @@ void EmuScreen::update() {
 		}
 	}
 
-	// Si hay nuevos mensajes en la red, el overlay está habilitado y el chat principal está CERRADO:
-	if (g_Config.bChatOverlayEnabled && chatOverlay_ && newOverlayMessage && !chatMenuVisible) {
-		chatOverlayLastCount_ = currentChatCount;
-		
+	// Condición de actualización: si hay un mensaje nuevo, O si está en modo "siempre visible" y regresamos del chat principal
+	bool shouldRepopulate = newOverlayMessage || (isAlwaysVisible && chatOverlay_ && chatOverlay_->GetVisibility() != V_VISIBLE);
+
+	if (g_Config.bChatOverlayEnabled && chatOverlay_ && shouldRepopulate && !chatMenuVisible) {
+		if (newOverlayMessage) {
+			chatOverlayLastCount_ = currentChatCount;
+		}
+
+		// Calcular el ancho en píxeles/unidades UI en base al porcentaje elegido
+		Bounds bounds = screenManager()->getUIContext()->GetBounds();
+		float maxWidth = bounds.w * (g_Config.iChatOverlayWidthPercent / 100.0f);
+
 		std::vector<std::string> all = getChatLog();
 		int maxLines = g_Config.iChatOverlayMaxLines > 0 ? g_Config.iChatOverlayMaxLines : 4;
 		chatOverlayMessages_.clear();
@@ -1548,38 +1558,41 @@ void EmuScreen::update() {
 			if (i >= 0) chatOverlayMessages_.push_back(all[i]);
 		}
 
-		// Recrear las líneas de texto aplicando formato de color al nombre de usuario
 		chatOverlay_->Clear();
 		chatOverlayTextViews_.clear();
+
 		for (auto &line : chatOverlayMessages_) {
 			size_t colon = line.find(": ");
 			if (colon != std::string::npos) {
-				std::string name = line.substr(0, colon + 1); // "Nombre:"
-				std::string msg = line.substr(colon + 1);    // " Mensaje"
+				std::string name = line.substr(0, colon + 1);
+				std::string msg = line.substr(colon + 1);
 
-				LinearLayout *row = chatOverlay_->Add(new LinearLayout(ORIENT_HORIZONTAL, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
+				// Fila horizontal limitada al ancho de maxWidth
+				LinearLayout *row = chatOverlay_->Add(new LinearLayout(ORIENT_HORIZONTAL, new LayoutParams(FILL_PARENT, WRAP_CONTENT)));
 				row->SetSpacing(0.0f);
 
-				TextView *tvName = row->Add(new TextView(name, ALIGN_LEFT, true, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
+				// Nombre toma su ancho natural (peso 0.0f)
+				TextView *tvName = row->Add(new TextView(name, ALIGN_LEFT, true, new LinearLayoutParams(WRAP_CONTENT, WRAP_CONTENT, 0.0f)));
 				tvName->SetTextColor(0xFFFFA500); 
 				chatOverlayTextViews_.push_back({tvName, 0xFFFFA500});
 
-				TextView *tvMsg = row->Add(new TextView(msg, ALIGN_LEFT | FLAG_WRAP_TEXT, true, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
+				// Mensaje toma el espacio restante (peso 1.0f) y hace salto de línea automático en el límite
+				TextView *tvMsg = row->Add(new TextView(msg, ALIGN_LEFT | FLAG_WRAP_TEXT, true, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, 1.0f)));
 				tvMsg->SetTextColor(0xFFFFFFFF);
 				chatOverlayTextViews_.push_back({tvMsg, 0xFFFFFFFF});
 			} else {
-				TextView *tv = chatOverlay_->Add(new TextView(line, ALIGN_LEFT | FLAG_WRAP_TEXT, true, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
+				TextView *tv = chatOverlay_->Add(new TextView(line, ALIGN_LEFT | FLAG_WRAP_TEXT, true, new LayoutParams(FILL_PARENT, WRAP_CONTENT)));
 				tv->SetTextColor(0xFFFFFFFF);
 				chatOverlayTextViews_.push_back({tv, 0xFFFFFFFF});
 			}
 		}
 
-		// Reajustar posición de anclaje
 		float margin = 12.0f;
 		float bottom_margin = (g_Config.iChatOverlayCorner == 2 || g_Config.iChatOverlayCorner == 3) ? 85.0f : margin;
 
+		// Asignamos explícitamente el maxWidth al contenedor para acotar horizontalmente los textos
 		chatOverlay_->ReplaceLayoutParams(new AnchorLayoutParams(
-			WRAP_CONTENT, WRAP_CONTENT,
+			maxWidth, WRAP_CONTENT,
 			(g_Config.iChatOverlayCorner == 0 || g_Config.iChatOverlayCorner == 2) ? margin : NONE,
 			(g_Config.iChatOverlayCorner == 0 || g_Config.iChatOverlayCorner == 1) ? margin : NONE,
 			(g_Config.iChatOverlayCorner == 1 || g_Config.iChatOverlayCorner == 3) ? margin : NONE,
@@ -1587,7 +1600,7 @@ void EmuScreen::update() {
 		));
 
 		chatOverlay_->SetVisibility(V_VISIBLE);
-		chatOverlayExpireTime_ = time_now_d() + g_Config.iChatOverlayFadeSeconds;
+		chatOverlayExpireTime_ = time_now_d() + (double)g_Config.iChatOverlayFadeSeconds;
 	}
 
 #ifndef _WIN32
@@ -1665,23 +1678,23 @@ void EmuScreen::update() {
 
 	// We handle the Fadeout per Frame behaviour here
 	if (chatOverlay_ && chatOverlay_->GetVisibility() == V_VISIBLE) {
-		if (g_Config.iChatOverlayFadeSeconds >= 999) {
-			// 'Persistence' behaviour: messages always visible preserving their original colors
+		bool isAlwaysVisible = g_Config.bChatOverlayAlwaysVisible || g_Config.iChatOverlayFadeSeconds >= 999;
+		if (isAlwaysVisible) {
+			// Mantener siempre visible conservando colores originales
 			for (auto &p : chatOverlayTextViews_) {
 				uint32_t baseRGB = p.second & 0x00FFFFFF;
-				p.first->SetTextColor(0xFF000000 | baseRGB); // Opacidad completa (0xFF000000) + su color base
+				p.first->SetTextColor(0xFF000000 | baseRGB); // Opacidad completa + su color
 			}
 		} else {
 			double remain = chatOverlayExpireTime_ - now;
 			if (remain <= 0.0) {
 				chatOverlay_->SetVisibility(V_GONE);
 			} else {
-				// Adjust text views alpha safely using our tracked list and preserving their base colors
 				double fade = remain / std::max(0.001, (double)g_Config.iChatOverlayFadeSeconds);
 				uint8_t a = static_cast<uint8_t>(255 * fade);
 				for (auto &p : chatOverlayTextViews_) {
 					uint32_t baseRGB = p.second & 0x00FFFFFF;
-					uint32_t txtColor = (uint32_t(a) << 24) | baseRGB; // Alfa dinámico (a) + su color base
+					uint32_t txtColor = (uint32_t(a) << 24) | baseRGB;
 					p.first->SetTextColor(txtColor);
 				}
 			}

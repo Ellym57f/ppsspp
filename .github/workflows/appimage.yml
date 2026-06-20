@@ -5,6 +5,7 @@ on:
     - master
     # For testing.
     #- test_arch
+    - multiplayer-chat-extend-2
     tags:
       - "v*.*"
     paths-ignore:
